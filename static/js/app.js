@@ -241,41 +241,52 @@ function renderPhBarChart(data) {
     const groups = {};
     data.forEach(row => {
         const group = row['所在组'];
-        if (!groups[group]) groups[group] = [];
-        groups[group].push({
-            name: row['池号'],
+        if (!groups[group]) groups[group] = {};
+        groups[group][row['池号']] = {
             value: row['期内pH均值'],
             level: row['期内液位均值'],
             designLevel: row['设计液位厘米']
-        });
+        };
     });
 
     const allPonds = [];
+    const pondToGroup = {};
+    data.forEach(row => {
+        if (!allPonds.includes(row['池号'])) {
+            allPonds.push(row['池号']);
+            pondToGroup[row['池号']] = row['所在组'];
+        }
+    });
+    allPonds.sort();
+
     const series = [];
     const legendData = [];
 
     Object.keys(groups).sort().forEach(group => {
         legendData.push(group);
-        const pondData = groups[group].sort((a, b) => a.name.localeCompare(b.name));
-        const values = pondData.map(p => p.value);
-        const pondNames = pondData.map(p => p.name);
+        const groupData = groups[group];
 
-        pondNames.forEach(p => {
-            if (!allPonds.includes(p)) allPonds.push(p);
+        const alignedData = allPonds.map(pond => {
+            if (groupData[pond]) {
+                return {
+                    value: groupData[pond].value,
+                    itemStyle: { color: GROUP_COLORS[group] || '#666' }
+                };
+            }
+            return { value: '-' };
         });
 
         series.push({
             name: group,
             type: 'bar',
-            data: pondData.map(p => ({
-                value: p.value,
-                itemStyle: { color: GROUP_COLORS[group] || '#666' }
-            })),
+            data: alignedData,
             barGap: '10%',
             label: {
                 show: true,
                 position: 'top',
-                formatter: '{c}'
+                formatter: function(params) {
+                    return params.value === '-' ? '' : params.value;
+                }
             }
         });
     });
@@ -285,7 +296,9 @@ function renderPhBarChart(data) {
             trigger: 'axis',
             axisPointer: { type: 'shadow' },
             formatter: function(params) {
-                const p = params[0];
+                const validParams = params.filter(p => p.value !== '-');
+                if (validParams.length === 0) return '';
+                const p = validParams[0];
                 return `<strong>${p.name}</strong><br/>pH均值: ${p.value}`;
             }
         },
@@ -302,7 +315,7 @@ function renderPhBarChart(data) {
         },
         xAxis: {
             type: 'category',
-            data: allPonds.sort(),
+            data: allPonds,
             axisLabel: { rotate: 45 }
         },
         yAxis: {
@@ -672,11 +685,34 @@ async function importCsv() {
             loadData();
             fileInput.value = '';
         } else {
-            showImportResult(data.message, 'error');
+            let errorMsg = data.message;
+            if (data.errors && data.errors.length > 0) {
+                errorMsg = data.errors.join('<br/>');
+            }
+            showImportResult(errorMsg, 'error');
         }
     } catch (error) {
         showImportResult('导入失败: ' + error.message, 'error');
     }
+}
+
+function validateManualRecord(record) {
+    if (!record['池号']) {
+        return '请选择池号';
+    }
+    if (!record['记录日期']) {
+        return '请选择记录日期';
+    }
+    if (isNaN(record['pH']) || record['pH'] < 0 || record['pH'] > 14) {
+        return 'pH值必须在0-14之间';
+    }
+    if (isNaN(record['实测液位厘米']) || record['实测液位厘米'] <= 0 || record['实测液位厘米'] > 300) {
+        return '实测液位必须在0-300厘米之间';
+    }
+    if (isNaN(record['表层盐花厚度毫米']) || record['表层盐花厚度毫米'] < 0 || record['表层盐花厚度毫米'] > 100) {
+        return '表层盐花厚度必须在0-100毫米之间';
+    }
+    return null;
 }
 
 async function addManualRecord() {
@@ -688,8 +724,9 @@ async function addManualRecord() {
         '表层盐花厚度毫米': parseFloat(document.getElementById('manualSalt').value)
     };
 
-    if (!record['池号'] || !record['记录日期'] || isNaN(record['实测液位厘米']) || isNaN(record['pH']) || isNaN(record['表层盐花厚度毫米'])) {
-        showImportResult('请填写完整的记录信息', 'error');
+    const validationError = validateManualRecord(record);
+    if (validationError) {
+        showImportResult(validationError, 'error');
         return;
     }
 
@@ -710,7 +747,11 @@ async function addManualRecord() {
             document.getElementById('manualPh').value = '';
             document.getElementById('manualSalt').value = '';
         } else {
-            showImportResult(data.message, 'error');
+            let errorMsg = data.message;
+            if (data.errors && data.errors.length > 0) {
+                errorMsg = data.errors.join('<br/>');
+            }
+            showImportResult(errorMsg, 'error');
         }
     } catch (error) {
         showImportResult('添加失败: ' + error.message, 'error');
@@ -719,7 +760,11 @@ async function addManualRecord() {
 
 function showImportResult(message, type) {
     const resultEl = document.getElementById('importResult');
-    resultEl.textContent = message;
+    if (message.includes('<br/>')) {
+        resultEl.innerHTML = message;
+    } else {
+        resultEl.textContent = message;
+    }
     resultEl.className = `import-result ${type}`;
 }
 
@@ -733,14 +778,52 @@ function showExportMenu() {
     menu.classList.toggle('active');
 }
 
-function exportData(type) {
+async function exportData(type) {
+    if (currentFilters.startDate && currentFilters.endDate && currentFilters.startDate > currentFilters.endDate) {
+        showToast('起始日期不能大于结束日期', 'error');
+        return;
+    }
+
     const params = new URLSearchParams({
         ...currentFilters,
         type: type
     });
-    window.location.href = `${API_BASE}/api/export?${params}`;
     document.getElementById('exportMenu').classList.remove('active');
     showToast('导出中...', 'info');
+
+    try {
+        const res = await fetch(`${API_BASE}/api/export?${params}`);
+        const contentType = res.headers.get('content-type');
+
+        if (contentType && contentType.includes('application/json')) {
+            const data = await res.json();
+            showToast(data.message || '导出失败', 'error');
+            return;
+        }
+
+        const blob = await res.blob();
+        const disposition = res.headers.get('content-disposition');
+        let filename = `export_${Date.now()}.csv`;
+        if (disposition) {
+            const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+            if (match && match[1]) {
+                filename = match[1].replace(/['"]/g, '');
+            }
+        }
+
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+
+        showToast('导出成功', 'success');
+    } catch (error) {
+        showToast('导出失败: ' + error.message, 'error');
+    }
 }
 
 function showToast(message, type = 'success') {

@@ -150,12 +150,88 @@ def append_records(new_records):
     new_df = pd.DataFrame(new_records)
     new_df['记录日期'] = pd.to_datetime(new_df['记录日期'])
 
+    key_cols = ['池号', '记录日期']
+    value_cols = ['实测液位厘米', 'pH', '表层盐花厚度毫米']
+
+    new_count = 0
+    update_count = 0
+
+    for _, new_row in new_df.iterrows():
+        key_mask = (existing['池号'] == new_row['池号']) & (existing['记录日期'] == new_row['记录日期'])
+        existing_row = existing[key_mask]
+
+        if existing_row.empty:
+            new_count += 1
+        else:
+            is_different = False
+            for col in value_cols:
+                if col in new_row and col in existing_row.columns:
+                    existing_val = existing_row[col].values[0]
+                    new_val = new_row[col]
+                    if pd.notna(new_val) and abs(float(existing_val) - float(new_val)) > 1e-9:
+                        is_different = True
+                        break
+            if is_different:
+                update_count += 1
+
     combined = pd.concat([existing, new_df], ignore_index=True)
-    combined = combined.drop_duplicates(subset=['池号', '记录日期'], keep='last')
-    combined = combined.sort_values(['池号', '记录日期'])
+    combined = combined.drop_duplicates(subset=key_cols, keep='last')
+    combined = combined.sort_values(key_cols)
 
     save_records(combined)
-    return len(new_df)
+    return new_count + update_count
+
+
+def validate_record(record, ponds_df=None):
+    if ponds_df is None:
+        ponds_df = load_ponds()
+
+    valid_ponds = ponds_df['池号'].tolist()
+
+    if '池号' not in record or not record['池号']:
+        return False, '缺少池号'
+    if record['池号'] not in valid_ponds:
+        return False, f"池号 {record['池号']} 不存在于菜池档案中"
+
+    if '记录日期' not in record or not record['记录日期']:
+        return False, '缺少记录日期'
+    try:
+        pd.to_datetime(record['记录日期'])
+    except Exception:
+        return False, f"记录日期 {record['记录日期']} 格式无效"
+
+    if 'pH' not in record or record['pH'] is None or (isinstance(record['pH'], str) and record['pH'].strip() == ''):
+        return False, '缺少pH值'
+    try:
+        ph = float(record['pH'])
+        if ph < 0 or ph > 14:
+            return False, f"pH值 {ph} 超出有效范围 (0-14)"
+    except (ValueError, TypeError):
+        return False, f"pH值 {record['pH']} 不是有效数字"
+
+    if '实测液位厘米' not in record or record['实测液位厘米'] is None or (isinstance(record['实测液位厘米'], str) and record['实测液位厘米'].strip() == ''):
+        return False, '缺少实测液位厘米'
+    try:
+        level = float(record['实测液位厘米'])
+        if level <= 0:
+            return False, f"实测液位厘米 {level} 必须大于0"
+        if level > 300:
+            return False, f"实测液位厘米 {level} 超出合理范围 (最大300)"
+    except (ValueError, TypeError):
+        return False, f"实测液位厘米 {record['实测液位厘米']} 不是有效数字"
+
+    if '表层盐花厚度毫米' not in record or record['表层盐花厚度毫米'] is None or (isinstance(record['表层盐花厚度毫米'], str) and record['表层盐花厚度毫米'].strip() == ''):
+        return False, '缺少表层盐花厚度毫米'
+    try:
+        salt = float(record['表层盐花厚度毫米'])
+        if salt < 0:
+            return False, f"表层盐花厚度毫米 {salt} 不能为负数"
+        if salt > 100:
+            return False, f"表层盐花厚度毫米 {salt} 超出合理范围 (最大100)"
+    except (ValueError, TypeError):
+        return False, f"表层盐花厚度毫米 {record['表层盐花厚度毫米']} 不是有效数字"
+
+    return True, None
 
 
 def get_group_layout():

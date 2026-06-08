@@ -15,11 +15,24 @@ from data_loader import (
     calculate_period_averages,
     calculate_adjacent_ph_diff,
     append_records,
-    get_group_layout
+    get_group_layout,
+    validate_record
 )
 
 app = Flask(__name__)
 CORS(app)
+
+
+def validate_date_range(start_date, end_date):
+    if start_date and end_date:
+        try:
+            start = datetime.strptime(start_date, '%Y-%m-%d')
+            end = datetime.strptime(end_date, '%Y-%m-%d')
+            if start > end:
+                return False, '起始日期不能大于结束日期'
+        except ValueError:
+            return False, '日期格式无效，请使用 YYYY-MM-DD 格式'
+    return True, None
 
 
 @app.route('/')
@@ -66,6 +79,13 @@ def api_daily_averages():
     start_date = request.args.get('start_date') or request.args.get('startDate')
     end_date = request.args.get('end_date') or request.args.get('endDate')
 
+    valid, error_msg = validate_date_range(start_date, end_date)
+    if not valid:
+        return jsonify({
+            'success': False,
+            'message': error_msg
+        }), 400
+
     df = calculate_daily_averages(group, start_date, end_date)
     return jsonify({
         'success': True,
@@ -79,6 +99,13 @@ def api_period_averages():
     start_date = request.args.get('start_date') or request.args.get('startDate')
     end_date = request.args.get('end_date') or request.args.get('endDate')
 
+    valid, error_msg = validate_date_range(start_date, end_date)
+    if not valid:
+        return jsonify({
+            'success': False,
+            'message': error_msg
+        }), 400
+
     df = calculate_period_averages(group, start_date, end_date)
     return jsonify({
         'success': True,
@@ -91,6 +118,13 @@ def api_adjacent_ph_diff():
     group = request.args.get('group')
     start_date = request.args.get('start_date') or request.args.get('startDate')
     end_date = request.args.get('end_date') or request.args.get('endDate')
+
+    valid, error_msg = validate_date_range(start_date, end_date)
+    if not valid:
+        return jsonify({
+            'success': False,
+            'message': error_msg
+        }), 400
 
     df = calculate_adjacent_ph_diff(group, start_date, end_date)
     return jsonify({
@@ -118,7 +152,28 @@ def api_add_records():
                 'message': '缺少records参数'
             }), 400
 
-        count = append_records(data['records'])
+        records = data['records']
+        if not isinstance(records, list) or len(records) == 0:
+            return jsonify({
+                'success': False,
+                'message': '无有效记录，请至少提供一条记录'
+            }), 400
+
+        ponds_df = load_ponds()
+        errors = []
+        for i, record in enumerate(records):
+            valid, error_msg = validate_record(record, ponds_df)
+            if not valid:
+                errors.append(f"第{i+1}条记录: {error_msg}")
+
+        if errors:
+            return jsonify({
+                'success': False,
+                'message': '数据校验失败',
+                'errors': errors
+            }), 400
+
+        count = append_records(records)
         return jsonify({
             'success': True,
             'message': f'成功导入 {count} 条记录',
@@ -157,7 +212,28 @@ def api_import_csv():
                         'message': f'缺少必要列: {col}'
                     }), 400
 
-            count = append_records(df.to_dict('records'))
+            if df.empty:
+                return jsonify({
+                    'success': False,
+                    'message': 'CSV文件为空，无有效记录'
+                }), 400
+
+            ponds_df = load_ponds()
+            records = df.to_dict('records')
+            errors = []
+            for i, record in enumerate(records):
+                valid, error_msg = validate_record(record, ponds_df)
+                if not valid:
+                    errors.append(f"第{i+1}行: {error_msg}")
+
+            if errors:
+                return jsonify({
+                    'success': False,
+                    'message': '数据校验失败',
+                    'errors': errors
+                }), 400
+
+            count = append_records(records)
             return jsonify({
                 'success': True,
                 'message': f'成功导入 {count} 条记录',
@@ -183,6 +259,13 @@ def api_export():
     export_type = request.args.get('type', 'period')
 
     try:
+        valid, error_msg = validate_date_range(start_date, end_date)
+        if not valid:
+            return jsonify({
+                'success': False,
+                'message': error_msg
+            }), 400
+
         if export_type == 'period':
             df = calculate_period_averages(group, start_date, end_date)
             filename = f'期内统计_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
@@ -226,6 +309,13 @@ def api_summary():
     end_date = request.args.get('end_date') or request.args.get('endDate')
 
     try:
+        valid, error_msg = validate_date_range(start_date, end_date)
+        if not valid:
+            return jsonify({
+                'success': False,
+                'message': error_msg
+            }), 400
+
         period_avg = calculate_period_averages(group, start_date, end_date)
         adjacent_diff = calculate_adjacent_ph_diff(group, start_date, end_date)
 

@@ -11,6 +11,17 @@ let currentFilters = {
     endDate: ''
 };
 
+let selectedPonds = [];
+const MAX_SELECTED = 3;
+
+let cachedData = {
+    periodAverages: [],
+    adjacentPhDiff: [],
+    dailyAverages: [],
+    summary: null,
+    groupLayout: null
+};
+
 const GROUP_COLORS = {
     'A组': '#667eea',
     'B组': '#f093fb',
@@ -48,6 +59,134 @@ function setupEventListeners() {
             exportMenu.classList.remove('active');
         }
     });
+}
+
+function togglePondSelection(pondId, isMultiSelect) {
+    const idx = selectedPonds.indexOf(pondId);
+    if (idx !== -1) {
+        selectedPonds.splice(idx, 1);
+    } else {
+        if (!isMultiSelect) {
+            selectedPonds = [];
+        }
+        if (selectedPonds.length >= MAX_SELECTED) {
+            showToast(`最多只能选中 ${MAX_SELECTED} 个池`, 'error');
+            return;
+        }
+        selectedPonds.push(pondId);
+    }
+    updateClearFocusBtn();
+    refreshAllFocusedViews();
+}
+
+function clearFocus() {
+    if (selectedPonds.length > 0) {
+        selectedPonds = [];
+        updateClearFocusBtn();
+        refreshAllFocusedViews();
+        showToast('已清除聚焦', 'info');
+    }
+}
+
+function updateClearFocusBtn() {
+    const btn = document.getElementById('clearFocusBtn');
+    const periodHint = document.getElementById('periodFocusHint');
+    const adjacentHint = document.getElementById('adjacentFocusHint');
+    const summaryHint = document.getElementById('summaryFocusHint');
+
+    if (selectedPonds.length > 0) {
+        const hintText = `已聚焦: ${selectedPonds.join('、')}`;
+        if (btn) {
+            btn.style.display = 'inline-flex';
+            btn.innerHTML = `❌ 清除聚焦 <span class="focus-badge">${selectedPonds.length}</span>`;
+        }
+        if (periodHint) {
+            periodHint.textContent = hintText;
+            periodHint.style.display = 'inline-block';
+        }
+        if (adjacentHint) {
+            adjacentHint.textContent = hintText;
+            adjacentHint.style.display = 'inline-block';
+        }
+        if (summaryHint) {
+            summaryHint.textContent = hintText;
+            summaryHint.style.display = 'inline-block';
+        }
+    } else {
+        if (btn) {
+            btn.style.display = 'none';
+        }
+        if (periodHint) {
+            periodHint.style.display = 'none';
+        }
+        if (adjacentHint) {
+            adjacentHint.style.display = 'none';
+        }
+        if (summaryHint) {
+            summaryHint.style.display = 'none';
+        }
+    }
+}
+
+function refreshAllFocusedViews() {
+    renderPeriodTable(cachedData.periodAverages);
+    renderPhBarChart(cachedData.periodAverages);
+    renderAdjacentTable(cachedData.adjacentPhDiff);
+    renderPhDiffScatterChart(cachedData.adjacentPhDiff);
+    renderTrendChart(cachedData.dailyAverages);
+    renderGroupLayoutChart(cachedData.groupLayout);
+    recalculateSummary();
+}
+
+function recalculateSummary() {
+    if (!cachedData.periodAverages || cachedData.periodAverages.length === 0) {
+        return;
+    }
+
+    let data = cachedData.periodAverages;
+    if (selectedPonds.length > 0) {
+        data = data.filter(row => selectedPonds.includes(row['池号']));
+    }
+
+    if (data.length === 0) {
+        return;
+    }
+
+    const totalPonds = data.length;
+    const totalRecords = data.reduce((sum, row) => sum + (row['记录天数'] || 0), 0);
+    const avgPh = (data.reduce((sum, row) => sum + (parseFloat(row['期内pH均值']) || 0), 0) / totalPonds).toFixed(2);
+    const avgLevel = (data.reduce((sum, row) => sum + (parseFloat(row['期内液位均值']) || 0), 0) / totalPonds).toFixed(1);
+
+    const adjacentData = selectedPonds.length > 0
+        ? cachedData.adjacentPhDiff.filter(row =>
+            selectedPonds.includes(row['池号1']) || selectedPonds.includes(row['池号2'])
+        )
+        : cachedData.adjacentPhDiff;
+
+    let maxPhDiff = '0';
+    let avgPhDiff = '0';
+    if (adjacentData && adjacentData.length > 0) {
+        const diffs = adjacentData.map(row => parseFloat(row['pH差值']) || 0);
+        maxPhDiff = Math.max(...diffs).toFixed(2);
+        avgPhDiff = (diffs.reduce((a, b) => a + b, 0) / diffs.length).toFixed(2);
+    }
+
+    document.getElementById('totalPonds').textContent = totalPonds;
+    document.getElementById('totalRecords').textContent = totalRecords;
+    document.getElementById('avgPh').textContent = avgPh;
+    document.getElementById('avgLevel').textContent = avgLevel;
+    document.getElementById('maxPhDiff').textContent = maxPhDiff;
+    document.getElementById('avgPhDiff').textContent = avgPhDiff;
+}
+
+function validateSelectedPondsInNewData(newPonds) {
+    const pondsSet = new Set(newPonds);
+    const removedPonds = selectedPonds.filter(p => !pondsSet.has(p));
+    if (removedPonds.length > 0) {
+        selectedPonds = selectedPonds.filter(p => pondsSet.has(p));
+        updateClearFocusBtn();
+        showToast(`池号 ${removedPonds.join('、')} 不在新查询结果中，已取消选中`, 'info');
+    }
 }
 
 async function loadInitialData() {
@@ -129,12 +268,15 @@ async function fetchSummary() {
         const data = await res.json();
 
         if (data.success) {
-            document.getElementById('totalPonds').textContent = data.data.total_ponds;
-            document.getElementById('totalRecords').textContent = data.data.total_records;
-            document.getElementById('avgPh').textContent = data.data.avg_ph;
-            document.getElementById('avgLevel').textContent = data.data.avg_level;
-            document.getElementById('maxPhDiff').textContent = data.data.max_ph_diff;
-            document.getElementById('avgPhDiff').textContent = data.data.avg_ph_diff;
+            cachedData.summary = data.data;
+            if (selectedPonds.length === 0) {
+                document.getElementById('totalPonds').textContent = data.data.total_ponds;
+                document.getElementById('totalRecords').textContent = data.data.total_records;
+                document.getElementById('avgPh').textContent = data.data.avg_ph;
+                document.getElementById('avgLevel').textContent = data.data.avg_level;
+                document.getElementById('maxPhDiff').textContent = data.data.max_ph_diff;
+                document.getElementById('avgPhDiff').textContent = data.data.avg_ph_diff;
+            }
         }
     } catch (error) {
         console.error('获取汇总数据失败:', error);
@@ -148,8 +290,14 @@ async function fetchPeriodAverages() {
         const data = await res.json();
 
         if (data.success) {
+            const newPonds = data.data.map(row => row['池号']);
+            validateSelectedPondsInNewData(newPonds);
+            cachedData.periodAverages = data.data;
             renderPeriodTable(data.data);
             renderPhBarChart(data.data);
+            if (selectedPonds.length > 0) {
+                recalculateSummary();
+            }
         }
     } catch (error) {
         console.error('获取期内统计失败:', error);
@@ -163,8 +311,12 @@ async function fetchAdjacentPhDiff() {
         const data = await res.json();
 
         if (data.success) {
+            cachedData.adjacentPhDiff = data.data;
             renderAdjacentTable(data.data);
             renderPhDiffScatterChart(data.data);
+            if (selectedPonds.length > 0) {
+                recalculateSummary();
+            }
         }
     } catch (error) {
         console.error('获取邻池pH差值失败:', error);
@@ -178,6 +330,7 @@ async function fetchDailyAverages() {
         const data = await res.json();
 
         if (data.success) {
+            cachedData.dailyAverages = data.data;
             renderTrendChart(data.data);
         }
     } catch (error) {
@@ -191,6 +344,7 @@ async function fetchGroupLayout() {
         const data = await res.json();
 
         if (data.success) {
+            cachedData.groupLayout = data.data;
             renderGroupLayoutChart(data.data);
         }
     } catch (error) {
@@ -204,8 +358,12 @@ function renderPeriodTable(data) {
 
     data.forEach(row => {
         const tr = document.createElement('tr');
+        const pondId = row['池号'];
+        if (selectedPonds.includes(pondId)) {
+            tr.classList.add('selected');
+        }
         tr.innerHTML = `
-            <td><strong>${row['池号']}</strong></td>
+            <td><strong>${row['池号']}${selectedPonds.includes(pondId) ? ' <span class="focus-badge">已选</span>' : ''}</strong></td>
             <td>${row['所在组']}</td>
             <td>${row['设计液位厘米']}</td>
             <td>${row['期内液位均值']}</td>
@@ -213,6 +371,10 @@ function renderPeriodTable(data) {
             <td>${row['期内盐花厚度均值']}</td>
             <td>${row['记录天数']}</td>
         `;
+        tr.addEventListener('click', function(e) {
+            const isMultiSelect = e.ctrlKey || e.metaKey;
+            togglePondSelection(pondId, isMultiSelect);
+        });
         tbody.appendChild(tr);
     });
 }
@@ -221,13 +383,22 @@ function renderAdjacentTable(data) {
     const tbody = document.querySelector('#adjacentTable tbody');
     tbody.innerHTML = '';
 
-    data.forEach(row => {
+    let filteredData = data;
+    if (selectedPonds.length > 0) {
+        filteredData = data.filter(row =>
+            selectedPonds.includes(row['池号1']) || selectedPonds.includes(row['池号2'])
+        );
+    }
+
+    filteredData.forEach(row => {
         const tr = document.createElement('tr');
         const diffClass = row['pH差值'] > 0.3 ? 'color: #e74c3c;' : row['pH差值'] > 0.15 ? 'color: #f39c12;' : 'color: #27ae60;';
+        const pond1Highlight = selectedPonds.includes(row['池号1']) ? 'background: rgba(240, 147, 251, 0.2);' : '';
+        const pond2Highlight = selectedPonds.includes(row['池号2']) ? 'background: rgba(240, 147, 251, 0.2);' : '';
         tr.innerHTML = `
             <td>${row['组号']}</td>
-            <td>${row['池号1']}</td>
-            <td>${row['池号2']}</td>
+            <td style="${pond1Highlight}">${row['池号1']}${selectedPonds.includes(row['池号1']) ? ' <span class="focus-badge">已选</span>' : ''}</td>
+            <td style="${pond2Highlight}">${row['池号2']}${selectedPonds.includes(row['池号2']) ? ' <span class="focus-badge">已选</span>' : ''}</td>
             <td>${row['池1_pH均值']}</td>
             <td>${row['池2_pH均值']}</td>
             <td><strong style="${diffClass}">${row['pH差值']}</strong></td>
@@ -268,9 +439,15 @@ function renderPhBarChart(data) {
 
         const alignedData = allPonds.map(pond => {
             if (groupData[pond]) {
+                const isSelected = selectedPonds.includes(pond);
+                const baseColor = GROUP_COLORS[group] || '#666';
+                const opacity = selectedPonds.length > 0 && !isSelected ? 0.3 : 1;
                 return {
                     value: groupData[pond].value,
-                    itemStyle: { color: GROUP_COLORS[group] || '#666' }
+                    itemStyle: {
+                        color: baseColor,
+                        opacity: opacity
+                    }
                 };
             }
             return { value: '-' };
@@ -299,7 +476,8 @@ function renderPhBarChart(data) {
                 const validParams = params.filter(p => p.value !== '-');
                 if (validParams.length === 0) return '';
                 const p = validParams[0];
-                return `<strong>${p.name}</strong><br/>pH均值: ${p.value}`;
+                const isSelected = selectedPonds.includes(p.name);
+                return `<strong>${p.name}</strong>${isSelected ? ' <span style="color:#f5576c;">(已聚焦)</span>' : ''}<br/>pH均值: ${p.value}`;
             }
         },
         legend: {
@@ -316,7 +494,21 @@ function renderPhBarChart(data) {
         xAxis: {
             type: 'category',
             data: allPonds,
-            axisLabel: { rotate: 45 }
+            axisLabel: {
+                rotate: 45,
+                formatter: function(value) {
+                    if (selectedPonds.includes(value)) {
+                        return '{selected|' + value + '}';
+                    }
+                    return value;
+                },
+                rich: {
+                    selected: {
+                        color: '#f5576c',
+                        fontWeight: 'bold'
+                    }
+                }
+            }
         },
         yAxis: {
             type: 'value',
@@ -331,14 +523,26 @@ function renderPhBarChart(data) {
 }
 
 function renderPhDiffScatterChart(data) {
+    let filteredData = data;
+    if (selectedPonds.length > 0) {
+        filteredData = data.filter(row =>
+            selectedPonds.includes(row['池号1']) || selectedPonds.includes(row['池号2'])
+        );
+    }
+
     const groups = {};
-    data.forEach(row => {
+    filteredData.forEach(row => {
         const group = row['组号'];
         if (!groups[group]) groups[group] = [];
+        const isRelated = selectedPonds.includes(row['池号1']) || selectedPonds.includes(row['池号2']);
+        const opacity = selectedPonds.length > 0 && !isRelated ? 0.3 : 0.7;
         groups[group].push({
             name: `${row['池号1']}-${row['池号2']}`,
             value: [row['池1_pH均值'], row['池2_pH均值'], row['pH差值']],
-            diff: row['pH差值']
+            diff: row['pH差值'],
+            opacity: opacity,
+            pond1: row['池号1'],
+            pond2: row['池号2']
         });
     });
 
@@ -353,9 +557,11 @@ function renderPhDiffScatterChart(data) {
             data: groups[group].map(item => ({
                 value: item.value,
                 symbolSize: Math.max(10, item.diff * 50),
+                pond1: item.pond1,
+                pond2: item.pond2,
                 itemStyle: {
                     color: GROUP_COLORS[group] || '#666',
-                    opacity: 0.7
+                    opacity: item.opacity
                 }
             })),
             label: {
@@ -373,7 +579,10 @@ function renderPhDiffScatterChart(data) {
         tooltip: {
             trigger: 'item',
             formatter: function(params) {
-                return `<strong>${params.seriesName}</strong><br/>
+                const pond1 = params.data.pond1;
+                const pond2 = params.data.pond2;
+                const isRelated = selectedPonds.includes(pond1) || selectedPonds.includes(pond2);
+                return `<strong>${params.seriesName}</strong>${isRelated && selectedPonds.length > 0 ? ' <span style="color:#f5576c;">(已聚焦)</span>' : ''}<br/>
                         池1 pH: ${params.value[0]}<br/>
                         池2 pH: ${params.value[1]}<br/>
                         <strong>pH差值: ${params.value[2]}</strong>`;
@@ -409,6 +618,8 @@ function renderPhDiffScatterChart(data) {
 }
 
 function renderGroupLayoutChart(data) {
+    if (!data) return;
+
     const groups = Object.keys(data).sort();
     const maxPonds = Math.max(...groups.map(g => data[g].length));
 
@@ -420,15 +631,32 @@ function renderGroupLayoutChart(data) {
     const startX = 80;
     const startY = 60;
 
+    const pondPositions = [];
+
     groups.forEach((group, groupIdx) => {
         const ponds = data[group];
         ponds.forEach((pond, pondIdx) => {
+            const pondId = pond['池号'];
             const x = startX + pondIdx * (gridWidth + gapX);
             const y = startY + groupIdx * (gridHeight + gapY);
+            const isSelected = selectedPonds.includes(pondId);
+
+            pondPositions.push({
+                pondId: pondId,
+                x: x,
+                y: y,
+                width: gridWidth,
+                height: gridHeight
+            });
 
             series.push({
                 type: 'custom',
+                name: `pond_${pondId}`,
                 renderItem: function(params, api) {
+                    const strokeColor = isSelected ? '#f5576c' : '#fff';
+                    const lineWidth = isSelected ? 4 : 2;
+                    const shadowBlur = isSelected ? 20 : 10;
+                    const shadowColor = isSelected ? 'rgba(245, 87, 108, 0.6)' : 'rgba(0,0,0,0.2)';
                     return {
                         type: 'rect',
                         shape: {
@@ -440,14 +668,14 @@ function renderGroupLayoutChart(data) {
                         },
                         style: {
                             fill: GROUP_COLORS[group] || '#666',
-                            stroke: '#fff',
-                            lineWidth: 2,
-                            shadowBlur: 10,
-                            shadowColor: 'rgba(0,0,0,0.2)'
+                            stroke: strokeColor,
+                            lineWidth: lineWidth,
+                            shadowBlur: shadowBlur,
+                            shadowColor: shadowColor
                         }
                     };
                 },
-                data: [0]
+                data: [{ value: 0, pondId: pondId }]
             });
 
             series.push({
@@ -459,8 +687,8 @@ function renderGroupLayoutChart(data) {
                             text: pond['池号'],
                             x: x + gridWidth / 2,
                             y: y + gridHeight / 2 - 8,
-                            fill: '#fff',
-                            fontSize: 16,
+                            fill: isSelected ? '#fff' : '#fff',
+                            fontSize: isSelected ? 17 : 16,
                             fontWeight: 'bold',
                             textAlign: 'center',
                             textVerticalAlign: 'middle'
@@ -476,11 +704,12 @@ function renderGroupLayoutChart(data) {
                     return {
                         type: 'text',
                         style: {
-                            text: `${pond['设计液位厘米']}cm`,
+                            text: `${pond['设计液位厘米']}cm${isSelected ? ' ✨' : ''}`,
                             x: x + gridWidth / 2,
                             y: y + gridHeight / 2 + 12,
-                            fill: 'rgba(255,255,255,0.9)',
+                            fill: 'rgba(255,255,255,0.95)',
                             fontSize: 11,
+                            fontWeight: isSelected ? 'bold' : 'normal',
                             textAlign: 'center',
                             textVerticalAlign: 'middle'
                         }
@@ -513,7 +742,16 @@ function renderGroupLayoutChart(data) {
 
     const option = {
         tooltip: {
-            show: false
+            show: true,
+            trigger: 'item',
+            formatter: function(params) {
+                if (params.seriesName && params.seriesName.startsWith('pond_')) {
+                    const pondId = params.seriesName.replace('pond_', '');
+                    const isSelected = selectedPonds.includes(pondId);
+                    return `<strong>${pondId}</strong>${isSelected ? ' <span style="color:#f5576c;">(已聚焦)</span>' : ''}<br/>点击选中/取消<br/>Ctrl+点击多选`;
+                }
+                return '';
+            }
         },
         grid: {
             left: 0,
@@ -535,6 +773,19 @@ function renderGroupLayoutChart(data) {
     };
 
     groupLayoutChart.setOption(option);
+
+    groupLayoutChart.off('click');
+    groupLayoutChart.on('click', function(params) {
+        if (params.seriesName && params.seriesName.startsWith('pond_')) {
+            const pondId = params.seriesName.replace('pond_', '');
+            const pondData = cachedData.periodAverages.find(p => p['池号'] === pondId);
+            if (pondData) {
+                togglePondSelection(pondId, false);
+            } else {
+                showToast(`池号 ${pondId} 不在当前查询结果中`, 'info');
+            }
+        }
+    });
 }
 
 function renderTrendChart(data) {
@@ -544,7 +795,19 @@ function renderTrendChart(data) {
     }
 
     const dates = [...new Set(data.map(d => d['记录日期']))].sort();
-    const ponds = [...new Set(data.map(d => d['池号']))].sort();
+    let ponds = [...new Set(data.map(d => d['池号']))].sort();
+
+    if (selectedPonds.length > 0) {
+        ponds = ponds.filter(p => selectedPonds.includes(p));
+    }
+
+    if (ponds.length === 0) {
+        const title = selectedPonds.length > 0
+            ? `已聚焦池号 ${selectedPonds.join('、')} 无趋势数据`
+            : '暂无数据';
+        trendChart.setOption({ title: { text: title, left: 'center', top: 'center' } });
+        return;
+    }
 
     const phSeries = [];
     const levelSeries = [];
@@ -553,6 +816,8 @@ function renderTrendChart(data) {
         const pondData = data.filter(d => d['池号'] === pond).sort((a, b) => a['记录日期'].localeCompare(b['记录日期']));
         const group = pondData[0]?.['所在组'];
         const color = GROUP_COLORS[group] || '#666';
+        const isSelected = selectedPonds.includes(pond);
+        const opacity = selectedPonds.length > 0 && !isSelected ? 0.3 : 1;
 
         phSeries.push({
             name: `${pond} pH`,
@@ -563,10 +828,10 @@ function renderTrendChart(data) {
                 return d ? d['pH'] : null;
             }),
             smooth: true,
-            lineStyle: { color: color, width: 2 },
-            itemStyle: { color: color },
+            lineStyle: { color: color, width: isSelected ? 3 : 2, opacity: opacity },
+            itemStyle: { color: color, opacity: opacity },
             symbol: 'circle',
-            symbolSize: 6
+            symbolSize: isSelected ? 8 : 6
         });
 
         levelSeries.push({
@@ -578,22 +843,43 @@ function renderTrendChart(data) {
                 return d ? d['实测液位厘米'] : null;
             }),
             smooth: true,
-            lineStyle: { color: color, width: 2, type: 'dashed' },
-            itemStyle: { color: color },
+            lineStyle: { color: color, width: isSelected ? 3 : 2, type: 'dashed', opacity: opacity },
+            itemStyle: { color: color, opacity: opacity },
             symbol: 'diamond',
-            symbolSize: 6
+            symbolSize: isSelected ? 8 : 6
         });
     });
 
+    const legendData = [...ponds.map(p => `${p} pH`), ...ponds.map(p => `${p} 液位`)];
+
     const option = {
+        title: {
+            text: selectedPonds.length > 0 ? `已聚焦: ${selectedPonds.join('、')}` : '',
+            right: 10,
+            top: 0,
+            textStyle: {
+                fontSize: 12,
+                color: '#f5576c'
+            }
+        },
         tooltip: {
-            trigger: 'axis'
+            trigger: 'axis',
+            formatter: function(params) {
+                let result = `<strong>${params[0].axisValue}</strong><br/>`;
+                params.forEach(p => {
+                    const isFocused = selectedPonds.some(sp => p.seriesName.startsWith(sp));
+                    result += `${p.marker}${p.seriesName}: ${p.value !== null ? p.value : '-'}${isFocused && selectedPonds.length > 0 ? ' <span style="color:#f5576c;">(已聚焦)</span>' : ''}<br/>`;
+                });
+                return result;
+            }
         },
         legend: {
-            data: [...ponds.map(p => `${p} pH`), ...ponds.map(p => `${p} 液位`)],
+            data: legendData,
             top: 0,
             type: 'scroll',
-            textStyle: { fontSize: 10 }
+            textStyle: { fontSize: 10 },
+            left: 0,
+            right: 150
         },
         grid: {
             left: '3%',
@@ -626,7 +912,7 @@ function renderTrendChart(data) {
         series: [...phSeries, ...levelSeries]
     };
 
-    trendChart.setOption(option);
+    trendChart.setOption(option, true);
 }
 
 function getPhColor(ph) {

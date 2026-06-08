@@ -54,12 +54,16 @@
             </div>
             <div class="control-group">
                 <button class="btn btn-primary" onclick="loadData()">🔄 查询</button>
+                <button class="btn btn-warning" onclick="clearFocus()" id="clearFocusBtn" style="display: none;">❌ 清除聚焦</button>
                 <button class="btn btn-success" onclick="openImportModal()">📥 导入记录</button>
                 <button class="btn btn-info" onclick="showExportMenu()">📤 导出</button>
             </div>
         </section>
 
         <section class="summary-cards">
+            <div style="grid-column: 1 / -1; margin-bottom: -10px;">
+                <span id="summaryFocusHint" class="focus-hint" style="display: none;"></span>
+            </div>
             <div class="card">
                 <div class="card-icon">📊</div>
                 <div class="card-content">
@@ -129,7 +133,8 @@
 
         <section class="data-tables">
             <div class="table-container">
-                <h3>📋 期内统计详情</h3>
+                <h3>📋 期内统计详情 <span id="periodFocusHint" class="focus-hint" style="display: none;"></span></h3>
+                <p class="hint" style="margin-top: -10px; margin-bottom: 10px; font-size: 12px; color: #888;">提示：点击行选中池号，按住 Ctrl/⌘ 可多选（最多3个）</p>
                 <div class="table-wrapper">
                     <table id="periodTable">
                         <thead>
@@ -148,7 +153,7 @@
                 </div>
             </div>
             <div class="table-container">
-                <h3>🔍 邻池pH差值详情</h3>
+                <h3>🔍 邻池pH差值详情 <span id="adjacentFocusHint" class="focus-hint" style="display: none;"></span></h3>
                 <div class="table-wrapper">
                     <table id="adjacentTable">
                         <thead>

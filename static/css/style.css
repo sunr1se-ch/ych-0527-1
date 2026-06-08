@@ -108,6 +108,11 @@ body {
     color: white;
 }
 
+.btn-warning {
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    color: white;
+}
+
 .btn-block {
     width: 100%;
     justify-content: center;
@@ -249,6 +254,41 @@ tbody tr:nth-child(even) {
 
 tbody tr:nth-child(even):hover {
     background: #f0f2ff;
+}
+
+tbody tr.selected {
+    background: linear-gradient(90deg, rgba(240, 147, 251, 0.2) 0%, rgba(245, 87, 108, 0.2) 100%) !important;
+    border-left: 4px solid #f5576c;
+}
+
+tbody tr.selected td:first-child {
+    padding-left: 11px;
+}
+
+tbody tr.selected:hover {
+    background: linear-gradient(90deg, rgba(240, 147, 251, 0.3) 0%, rgba(245, 87, 108, 0.3) 100%) !important;
+}
+
+.focus-hint {
+    display: inline-block;
+    margin-left: 10px;
+    padding: 2px 8px;
+    font-size: 12px;
+    font-weight: normal;
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    color: white;
+    border-radius: 10px;
+}
+
+.focus-badge {
+    display: inline-block;
+    margin-left: 5px;
+    padding: 1px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    color: white;
+    border-radius: 8px;
 }
 
 .modal {

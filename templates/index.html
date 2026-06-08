@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>盐渍菜池发酵液位与pH联动看板</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="{{ url_for('static', filename='js/echarts.min.js') }}" onload="console.log('ECharts loaded successfully')"></script>
+    <script>
+        window.addEventListener('load', function() {
+            if (typeof echarts === 'undefined') {
+                console.error('ECharts failed to load, retrying...');
+                var script = document.createElement('script');
+                script.src = '{{ url_for('static', filename='js/echarts.min.js') }}';
+                script.onload = function() {
+                    console.log('ECharts loaded on retry');
+                    loadDashboardScripts();
+                };
+                document.head.appendChild(script);
+            } else {
+                console.log('ECharts is ready');
+                loadDashboardScripts();
+            }
+        });
+        
+        function loadDashboardScripts() {
+            var script = document.createElement('script');
+            script.src = '{{ url_for('static', filename='js/app.js') }}';
+            document.body.appendChild(script);
+        }
+    </script>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>🥬 盐渍菜池发酵液位与pH联动看板</h1>
+            <p class="subtitle">实时监测菜池发酵状态，智能分析邻池pH差异</p>
+        </header>
+
+        <section class="control-panel">
+            <div class="control-group">
+                <label for="groupSelect">组别筛选：</label>
+                <select id="groupSelect">
+                    <option value="">全部组别</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="startDate">起始日期：</label>
+                <input type="date" id="startDate">
+            </div>
+            <div class="control-group">
+                <label for="endDate">结束日期：</label>
+                <input type="date" id="endDate">
+            </div>
+            <div class="control-group">
+                <button class="btn btn-primary" onclick="loadData()">🔄 查询</button>
+                <button class="btn btn-success" onclick="openImportModal()">📥 导入记录</button>
+                <button class="btn btn-info" onclick="showExportMenu()">📤 导出</button>
+            </div>
+        </section>
+
+        <section class="summary-cards">
+            <div class="card">
+                <div class="card-icon">📊</div>
+                <div class="card-content">
+                    <div class="card-label">菜池总数</div>
+                    <div class="card-value" id="totalPonds">0</div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-icon">📝</div>
+                <div class="card-content">
+                    <div class="card-label">记录总数</div>
+                    <div class="card-value" id="totalRecords">0</div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-icon">🧪</div>
+                <div class="card-content">
+                    <div class="card-label">平均pH</div>
+                    <div class="card-value" id="avgPh">0</div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-icon">💧</div>
+                <div class="card-content">
+                    <div class="card-label">平均液位(cm)</div>
+                    <div class="card-value" id="avgLevel">0</div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-icon">📈</div>
+                <div class="card-content">
+                    <div class="card-label">最大pH差</div>
+                    <div class="card-value" id="maxPhDiff">0</div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-icon">📉</div>
+                <div class="card-content">
+                    <div class="card-label">平均pH差</div>
+                    <div class="card-value" id="avgPhDiff">0</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="charts-section">
+            <div class="chart-row">
+                <div class="chart-container">
+                    <h3>📊 各池pH均值柱状图</h3>
+                    <div id="phBarChart" class="chart"></div>
+                </div>
+                <div class="chart-container">
+                    <h3>📈 邻池pH差值散点图</h3>
+                    <div id="phDiffScatterChart" class="chart"></div>
+                </div>
+            </div>
+            <div class="chart-row">
+                <div class="chart-container">
+                    <h3>📐 池组布设示意图</h3>
+                    <div id="groupLayoutChart" class="chart"></div>
+                </div>
+                <div class="chart-container">
+                    <h3>📊 液位与pH趋势对比</h3>
+                    <div id="trendChart" class="chart"></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="data-tables">
+            <div class="table-container">
+                <h3>📋 期内统计详情</h3>
+                <div class="table-wrapper">
+                    <table id="periodTable">
+                        <thead>
+                            <tr>
+                                <th>池号</th>
+                                <th>所在组</th>
+                                <th>设计液位(cm)</th>
+                                <th>期内液位均值(cm)</th>
+                                <th>期内pH均值</th>
+                                <th>盐花厚度均值(mm)</th>
+                                <th>记录天数</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="table-container">
+                <h3>🔍 邻池pH差值详情</h3>
+                <div class="table-wrapper">
+                    <table id="adjacentTable">
+                        <thead>
+                            <tr>
+                                <th>组号</th>
+                                <th>池号1</th>
+                                <th>池号2</th>
+                                <th>池1_pH均值</th>
+                                <th>池2_pH均值</th>
+                                <th>pH差值</th>
+                                <th>记录天数</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <div id="importModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>📥 导入新记录</h2>
+                <span class="close" onclick="closeImportModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="import-tabs">
+                    <button class="tab-btn active" onclick="switchTab('csv')">CSV文件导入</button>
+                    <button class="tab-btn" onclick="switchTab('manual')">手动录入</button>
+                </div>
+
+                <div id="csvTab" class="tab-content active">
+                    <div class="form-group">
+                        <label for="csvFile">选择CSV文件：</label>
+                        <input type="file" id="csvFile" accept=".csv">
+                    </div>
+                    <div class="form-group">
+                        <p class="hint">CSV文件格式要求：</p>
+                        <code>池号,记录日期,实测液位厘米,pH,表层盐花厚度毫米</code>
+                    </div>
+                    <button class="btn btn-primary btn-block" onclick="importCsv()">导入CSV</button>
+                </div>
+
+                <div id="manualTab" class="tab-content">
+                    <div class="form-group">
+                        <label for="manualPond">池号：</label>
+                        <select id="manualPond"></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="manualDate">记录日期：</label>
+                        <input type="date" id="manualDate">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="manualLevel">实测液位(cm)：</label>
+                            <input type="number" id="manualLevel" step="0.1" placeholder="例如: 145.5">
+                        </div>
+                        <div class="form-group">
+                            <label for="manualPh">pH值：</label>
+                            <input type="number" id="manualPh" step="0.01" placeholder="例如: 6.2">
+                        </div>
+                        <div class="form-group">
+                            <label for="manualSalt">盐花厚度(mm)：</label>
+                            <input type="number" id="manualSalt" step="0.1" placeholder="例如: 1.5">
+                        </div>
+                    </div>
+                    <button class="btn btn-primary btn-block" onclick="addManualRecord()">添加记录</button>
+                </div>
+
+                <div id="importResult" class="import-result"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="exportMenu" class="context-menu">
+        <div class="menu-item" onclick="exportData('period')">📊 导出期内统计</div>
+        <div class="menu-item" onclick="exportData('daily')">📈 导出日均统计</div>
+        <div class="menu-item" onclick="exportData('adjacent')">🔍 导出邻池pH差值</div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+</body>
+</html>
